@@ -1,0 +1,29 @@
+{
+  "name": "exchange-bots",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/app.ts",
+  "private": "true",
+  "scripts": {
+    "develop": "webpack-dev-server --mode development",
+    "build": "webpack --mode production",
+    "start": "npx ts-node ./src/app.ts",
+    "start-built": "node ./build/app.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@tensorflow/tfjs": "^4.15.0",
+    "axios": "^1.6.2",
+    "mathjs": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.3",
+    "ts-loader": "^9.5.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.2",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4"
+  }
+}
