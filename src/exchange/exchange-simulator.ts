@@ -1,9 +1,10 @@
 import { ExchangeBot } from '../bot/bot';
 import { CANDLE_INDEX_CLOSE, CANDLE_INDEX_END, NormalizationContext, NormalizedSecuritiesCandles, NormalizedCandle } from '../types';
-import { MAX_TIMESTAMP } from '../utils';
+import { MAX_TIMESTAMP, shuffle } from '../utils';
 
-export type SecuritiesPrices = Map<number, number>;
-export type CandlesMap = Map<number, NormalizedCandle[]>
+export type SecurityId = number;
+export type SecuritiesPrices = Map<SecurityId, number>;
+export type CandlesMap = Map<SecurityId, NormalizedCandle[]>
 
 export type SimulationResult = {
     bots: ExchangeBot[],
@@ -19,8 +20,8 @@ export class ExchangeSimulator {
     private readonly logging: boolean;
 
     public bots: ExchangeBot[];
-    private readonly currentCandles: CandlesMap;
-    private currentPrices: SecuritiesPrices;
+    private readonly currentCandles: CandlesMap = new Map();
+    private readonly currentPrices: SecuritiesPrices = new Map();
 
     private readonly disabledSecurities: Set<number> = new Set();
 
@@ -28,6 +29,7 @@ export class ExchangeSimulator {
     private endTime: number;
     private currentTime = 0;
 
+    private maxSecuritiesCount: number;
     private maxSessionsWithoutAction: number;
     private sessionsWithoutAction: number;
     private simulationStartRealTime?: Date;
@@ -42,9 +44,6 @@ export class ExchangeSimulator {
         this.normalizationContext = normalizationContext;
         this.timeStep = timeStep;
         this.logging = logging;
-
-        this.currentCandles = new Map();
-        this.currentPrices = new Map();
     }
 
     private findProperStartTime(startTime: number) {
@@ -69,10 +68,13 @@ export class ExchangeSimulator {
     public simulate(
         bots: ExchangeBot[],
         moneyAmount: number,
-        maxSessionsWithoutAction: number,
+        maxSecuritiesCount = Number.MAX_SAFE_INTEGER,
+        maxSessionsWithoutAction = 12,
         startTime = 0,
         endTime = MAX_TIMESTAMP,
     ): SimulationResult {
+        this.maxSecuritiesCount = maxSecuritiesCount;
+
         this.sessionsWithoutAction = 0;
         this.maxSessionsWithoutAction = maxSessionsWithoutAction;
 
@@ -84,6 +86,7 @@ export class ExchangeSimulator {
         this.bots = bots;
 
         this.simulationStartRealTime = new Date();
+        this.log();
         this.log(`Симуляция запущена в ${this.currentTime}`);
 
         while (
@@ -91,13 +94,18 @@ export class ExchangeSimulator {
             && this.currentTime < this.endTime
         ) {
             this.organizeSession();
-            this.log(`Торговая сессия завершена в ${this.currentTime}`);
+            // todo добавить сколько еще осталось сессий
 
-            ++this.sessionsWithoutAction;
             if (this.sessionsWithoutAction >= this.maxSessionsWithoutAction) {
                 this.log(`Количество сессий без действий стало ${this.maxSessionsWithoutAction}. Отмена симуляции...`)
                 break;
             }
+
+            if (this.sessionsWithoutAction > 0) {
+                this.log(`Осталось сессий без действий: ${this.maxSessionsWithoutAction - this.sessionsWithoutAction}`)
+            }
+
+            ++this.sessionsWithoutAction;
         }
 
         this.currentCandles.clear();
@@ -107,6 +115,7 @@ export class ExchangeSimulator {
         this.currentPrices.clear();
 
         this.log('Симуляция завершена');
+        this.log();
 
         return {
             bots: this.bots,
@@ -120,21 +129,26 @@ export class ExchangeSimulator {
     private organizeSession() {
         this.updateAvailableData();
 
-        this.currentPrices.forEach((price, securityIndex) => {
+        // Перемешиваем, чтобы исключить влияние порядка бумаг 
+        shuffle(Array.from(this.currentCandles)).forEach(([securityIndex, securityCandles]) => {
             this.bots.forEach((bot, botIndex) => {
-                if (!bot.canBuy(price) && !bot.canSell(securityIndex)) {
+                const price = this.currentPrices.get(securityIndex);
+
+                if (!bot.canBuy(price, 1) && !bot.canSell(securityIndex, 1)) {
                     return;
                 }
 
-                const { securityAmount, action } = bot.decide(this.currentTime, securityIndex, this.currentPrices, this.currentCandles);
+                const { securityAmount, action } = bot.securityDecide(this.currentTime, securityIndex, price, securityCandles);
 
                 if (action === 'buy') {
-                    bot.doBuy(this.currentTime, securityIndex, price, securityAmount);
-                    this.log(`Бот ${botIndex} купил ${securityAmount} ${this.getSecurityId(securityIndex)} за ${price}`);
+                    if (bot.buy(this.currentTime, securityIndex, price, securityAmount)) {
+                        this.log(`Бот ${botIndex} купил ${securityAmount} ${this.getSecurityId(securityIndex)} за ${price}`);
+                    }
                 } else if (action === 'sell') {
                     // todo почему-то не продают
-                    bot.doSell(this.currentTime, securityIndex, price, securityAmount);
-                    this.log(`Бот ${botIndex} продал ${securityAmount} ${this.getSecurityId(securityIndex)} за ${price}`);
+                    if (bot.sell(this.currentTime, securityIndex, price, securityAmount)) {
+                        this.log(`Бот ${botIndex} продал ${securityAmount} ${this.getSecurityId(securityIndex)} за ${price}`);
+                    }
                 }
 
                 if (action !== 'nothing') {
@@ -143,9 +157,20 @@ export class ExchangeSimulator {
             })
         });
 
-        this.candles.forEach((candles, securityIndex) => {
-            const isSecurityOutOfSale = candles[candles.length - 1][CANDLE_INDEX_END] < this.currentTime;
-            if (isSecurityOutOfSale && !this.disabledSecurities.has(securityIndex)) {
+        this.log();
+        this.log('Остатки на счетах:')
+        this.bots.forEach((bot, index) => {
+            this.log(`Бот ${index}: ${bot.getMoneyAmount()}`)
+        });
+
+        this.currentCandles.forEach((securityCandles, securityIndex) => {
+            const allSecurityCandles = this.candles[securityIndex];
+
+            const isSecurityOutOfSale = allSecurityCandles[allSecurityCandles.length - 1][CANDLE_INDEX_END] < this.currentTime;
+            if (
+                isSecurityOutOfSale
+                && !this.disabledSecurities.has(securityIndex)
+            ) {
                 this.currentCandles.delete(securityIndex);
                 // Цену бумаги не чистим, даем возможность продать по последней цене
 
@@ -155,13 +180,26 @@ export class ExchangeSimulator {
         });
 
         this.currentTime += this.timeStep
+
+        this.log(`Торговая сессия завершена в ${this.currentTime}`);
+        this.log();
     }
 
     private updateAvailableData() {
         // Обновляем доступные свечи
         let currentCandlesChanged = false;
+        const newSecurities = new Set();
         while (true) {
-            this.candles.forEach((candles, securityIndex) => {
+            // Если настроено maxSecuritiesCount, то перемешиваем массив 
+            const candles = this.maxSecuritiesCount === Number.MAX_SAFE_INTEGER
+                ? this.candles
+                : shuffle(this.candles);
+
+            candles.forEach((securityCandles, securityIndex) => {
+                if (this.disabledSecurities.has(securityIndex)) {
+                    return;
+                }
+
                 // Добавляем следующие доступные для ботов свечи 
                 let index: number;
                 let currentCandles: NormalizedCandle[];
@@ -169,21 +207,30 @@ export class ExchangeSimulator {
                     currentCandles = this.currentCandles.get(securityIndex);
                     index = currentCandles.length;
                 } else {
+                    if (this.currentCandles.size >= this.maxSecuritiesCount) {
+                        return;
+                    }
                     currentCandles = [];
                     index = 0;
                 }
 
-                for (; index < candles.length; index++) {
-                    if (candles[index][CANDLE_INDEX_END] > this.currentTime) {
+                for (; index < securityCandles.length; index++) {
+                    if (securityCandles[index][CANDLE_INDEX_END] > this.currentTime) {
                         break;
                     }
 
-                    currentCandles.push(candles[index]);
+                    currentCandles.push(securityCandles[index]);
                     currentCandlesChanged = true;
                 }
 
-                if (currentCandles.length && !this.currentCandles.has(securityIndex)) {
+                const isSecurityOutOfSale = securityCandles[securityCandles.length - 1][CANDLE_INDEX_END] < this.currentTime;
+                if (
+                    !isSecurityOutOfSale
+                    && currentCandles.length
+                    && !this.currentCandles.has(securityIndex)
+                ) {
                     this.currentCandles.set(securityIndex, currentCandles);
+                    newSecurities.add(this.getSecurityId(securityIndex));
                 }
             });
 
@@ -204,8 +251,9 @@ export class ExchangeSimulator {
             this.currentPrices.set(securityIndex, candles[candles.length - 1][CANDLE_INDEX_CLOSE]);
         });
 
-        // console.log(this.currentCandles);
-        // process.exit();
+        if (newSecurities.size > 0) {
+            this.log(`Начались продажи: ${Array.from(newSecurities).join(', ')}`);
+        }
     }
 
     private isSecuritiesOutOfSale() {
@@ -216,9 +264,13 @@ export class ExchangeSimulator {
         return this.normalizationContext.securityIdsMap[securityIndex];
     }
 
-    private log(message: string) {
+    private log(message?: string) {
         if (this.logging) {
-            console.log(`${new Date().toISOString()} ${message}`)
+            if (message) {
+                console.log(`${new Date().toISOString()} ${message}`)
+            } else {
+                console.log();
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
-import { Matrix, e, matrix, multiply } from "mathjs";
-import { CANDLE_LENGTH, EMPTY_CANDLE } from '../types';
-import { CandlesMap, SecuritiesPrices } from '../exchange/exchange-simulator';
+import * as tf from '@tensorflow/tfjs-node-gpu'
+
+import { CANDLE_LENGTH, NormalizedCandle } from '../types';
 
 export type BrainDecision = {
     buyProbability: number,
@@ -11,67 +11,75 @@ export type BrainDecision = {
     securityProportion: number,
 };
 
-export type Synapses = Matrix[];
+export type Synapses = tf.LayersModel;
 
 export class Brain {
-    private synapses: Synapses;
+    public readonly synapses: Synapses;
+    private readonly stateSignalsCount: number;
 
-    /** 
-     * Коэффициенты слоев нейронной сети 
-     * 
-     * @see valuableInputSignalsCount
-     * @see valuableOutputSignalsCount
-     * @see currentDataSignalsCount
-     */
-    constructor(synapses: Synapses) {
+    private constructor(synapses: Synapses, stateSignalsCount: number) {
         this.synapses = synapses;
-
-        if (this.currentInputSignalsCount <= Brain.valuableInputSignalsCount) {
-            throw new Error(`Кол-во входных сигналов должно быть больше ${Brain.valuableInputSignalsCount}`);
-        }
-
-        if (this.currentDataSignalsCount !== this.currentOutputSignalsCount - Brain.valuableOutputSignalsCount) {
-            throw new Error(`Кол-во выходных сигналов на основе кол-ва входных должно быть равно ${this.currentOutputSignalsCount - Brain.valuableOutputSignalsCount}`);
-        }
+        this.stateSignalsCount = stateSignalsCount;
     }
-
-    public static createRandom(dataSignalsCount: number, layerNeuronsCounts: number[]): Brain {
-        const synapses: Synapses = [];
     
-        let i = 0;
-        synapses.push(matrix().resize([layerNeuronsCounts[i], Brain.valuableInputSignalsCount + dataSignalsCount]));
-        for (; i < layerNeuronsCounts.length - 1; i++) {
-            synapses.push(matrix().resize([layerNeuronsCounts[i + 1], layerNeuronsCounts[i]]));
-        }
-        synapses.push(matrix().resize([Brain.valuableOutputSignalsCount + dataSignalsCount, layerNeuronsCounts[i]]));
-    
-        return new Brain(synapses.map(layer => 
-            layer.map(synapse => Brain.createRandomSynapse())));
+    static createRandom(stateSignalsCount: number): Brain {
+        return new Brain(Brain.createModel(stateSignalsCount), stateSignalsCount);
     }
 
-    public static fromFileData(data: any[]): Brain {
-        const synapses: Synapses = [];
+    static createFromModel(model: Synapses, stateSignalsCount: number): Brain {
+        model.compile({ loss: 'categoricalCrossentropy', optimizer: 'sgd' });
 
-        data.forEach(layer => synapses.push(matrix(layer.data)));
-
-        return new Brain(synapses);
+        return new Brain(model, stateSignalsCount);
     }
 
-    public mutate(mutationRate: number): Brain {
-        const newSynapses = this.synapses.map((layer) =>
-            layer.map(synapse => {
+    public mutate(mutationRate: number, mutationBias: number): Brain {
+        const newWeights: tf.Tensor<tf.Rank>[] = [];
+
+        this.synapses.getWeights().forEach(layer => {
+            const newLayerSynapses = layer.dataSync().map(synapse => {
                 if (Math.random() < mutationRate) {
-                    return Brain.createRandomSynapse();
+                    return synapse + mutationBias * Math.random()
                 }
                 return synapse;
-            })
-        );
+            });
 
-        return new Brain(newSynapses);
+            // todo layer.dispose();
+
+            newWeights.push(tf.tensor(newLayerSynapses, layer.shape));
+        });
+
+        const newModel = Brain.createModel(this.stateSignalsCount);
+        newModel.setWeights(newWeights);
+
+        return new Brain(newModel, this.stateSignalsCount);
     }
 
-    private static createRandomSynapse(): number {
-        return (Math.random() - Math.random()) / 100;
+    private static createModel(stateSignalsCount: number): tf.Sequential {
+        const initializer = tf.initializers.randomNormal({});
+        const model = tf.sequential();
+        
+        model.add(tf.layers.lstm({
+            name: 'lstm',
+            // кол-во чисел в передаваемом состоянии
+            units: stateSignalsCount,
+            // Текущие данные по состоянию: currentTime, moneyAmount, securityAmount, 
+            // свеча
+            inputShape: [null, 3 + CANDLE_LENGTH],
+            returnSequences: false,
+            dropout: 0.05,
+            kernelInitializer: initializer,
+        }));
+
+        /** @see BrainDecision */
+        model.add(tf.layers.dense({
+            units: 4,
+            activation: 'relu',
+            kernelInitializer: initializer
+        }));
+
+        model.compile({ loss: 'categoricalCrossentropy', optimizer: 'sgd' });
+
+        return model;
     }
 
     // Расчет на основе рекуррентной нейронки
@@ -79,87 +87,25 @@ export class Brain {
         currentTime: number,
         moneyAmount: number,
         securityAmount: number,
-        prices: SecuritiesPrices,
-        candles: CandlesMap
+        securityCandles: NormalizedCandle[]
     ): BrainDecision {
-        const signals = matrix().resize([this.currentInputSignalsCount]);
-        let outputSignals: Matrix;
+        const currentStateTensor = tf.tensor3d([[[currentTime, moneyAmount, securityAmount]]]);
+        const securityCandlesTensor = tf.tensor3d([securityCandles]);
 
-        let signalsIndex = 0;
-        signals.set([signalsIndex++], currentTime);
-        signals.set([signalsIndex++], moneyAmount);
+        const inputs = tf.concat([
+            // Умножаем на каждую цену
+            currentStateTensor.tile([1, securityCandles.length, 1]),
+            securityCandlesTensor
+        ], 2);
 
-        prices.forEach((price, securityIndex) => {
-            signals.set([signalsIndex++], price);
-            signals.set([signalsIndex++], securityAmount);
-
-            // EMPTY_CANDLE, если продажи ценной бумаги прекращены
-            (candles.get(securityIndex) || [EMPTY_CANDLE]).forEach((candle) => {
-                for (let i = 0; i < CANDLE_LENGTH; i++) {
-                    signals.set([i + signalsIndex++], candle[i]);
-                }
-                 
-                outputSignals = this.calculateDecision(signals);
-
-                for (let i = Brain.valuableOutputSignalsCount; i < outputSignals.size()[0]; i++) {
-                    // Копируем полученные сигналы данных во входные
-                    signals.set([signalsIndex++], outputSignals.get([i]));
-                }
-
-                signalsIndex = Brain.valuableInputSignalsCount - CANDLE_LENGTH;
-            });
-
-            signalsIndex -= 2;
-        });
+        /** @ts-ignore-next-line */
+        const outputSignals = this.synapses.predict(inputs).dataSync();
 
         return {
-            buyProbability: outputSignals.get([0]),
-            sellProbability: outputSignals.get([1]),
-            nothingProbability: outputSignals.get([2]),
-            securityProportion: outputSignals.get([3]),
+            buyProbability: outputSignals[1],
+            sellProbability: outputSignals[1],
+            nothingProbability: outputSignals[2],
+            securityProportion: outputSignals[3],
         };
-    }
-
-    private calculateDecision(inputSignals: Matrix): Matrix {
-        let outputSignals = this.synapses.reduce(
-            (vector, matrix) => multiply(matrix, vector),
-            inputSignals
-        );
-
-        return outputSignals.map(Brain.applySigmoid);
-    }
-
-    private static applySigmoid(x: number): number {
-        return 1.0 / (1.0 + Math.pow(e, -0.1 * x));
-    }
-
-    /**
-     * @see decide
-     */
-    static get valuableInputSignalsCount(): number {
-        return 3 + 2 + CANDLE_LENGTH;
-    }
-
-    /**
-     * @see BrainDecision
-     */
-    static get valuableOutputSignalsCount(): number {
-        return 4;
-    }
-
-    get currentDataSignalsCount(): number {
-        return this.synapses[0].size()[1] - Brain.valuableInputSignalsCount;
-    }
-
-    get currentInputSignalsCount(): number {
-        return this.synapses[0].size()[1]; // кол-во столбцов в первой матрице
-    }
-
-    get currentOutputSignalsCount(): number {
-        return this.synapses[this.synapses.length - 1].size()[0]; // кол-во строк в последней матрице
-    }
-
-    getSynapses(): Synapses {
-        return this.synapses;
     }
 }

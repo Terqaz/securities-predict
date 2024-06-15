@@ -1,11 +1,11 @@
-import { compare } from "mathjs";
-import { SecuritiesPrices } from "../exchange/exchange-simulator";
+import { SecuritiesPrices, SecurityId } from "../exchange/exchange-simulator";
+import { compare } from "../utils";
 
-export type SecurityAmounts = Map<number, number>;
+export type SecurityAmounts = Map<SecurityId, number>;
 
 export type Transaction = {
     time: number,
-    securityIndex: number,
+    securityIndex: SecurityId,
     amount: number
 }
 
@@ -31,7 +31,7 @@ export class SecuritiesBag {
         });
     }
 
-    sell(time: number, securityIndex: number, amount: number) {
+    sell(time: number, securityIndex: SecurityId, amount: number) {
         if (!this.bag.has(securityIndex) || this.bag.get(securityIndex) < amount) {
             throw new Error(`Недостаточно кол-ва бумаги ${securityIndex} для продажи`);
         }
@@ -45,7 +45,7 @@ export class SecuritiesBag {
         });
     }
 
-    getAmount(securityIndex: number): number {
+    getAmount(securityIndex: SecurityId): number {
         return this.bag.has(securityIndex) ? this.bag.get(securityIndex) : 0
     }
 

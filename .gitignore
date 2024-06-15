@@ -1,0 +1,9 @@
+/.*
+!.gitignore
+/node_modules
+
+/cache
+/results
+
+/dist/*
+!/dist/index.html

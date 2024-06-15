@@ -2,17 +2,16 @@ const CONFIG = {
     clients: {
         moex: {
             baseUrl: 'http://iss.moex.com'
-        } 
+        }
     },
-    cache: {
-        securitiesCandles: 'securities-candles.json',
-        securitiesCandlesNormalized: 'securities-candles-normalized.json'
+    cacheFilepaths: {
+        securitiesCandles: {
+            day: 'dist/candles/securities-candles-day.json',
+            month: 'dist/candles/securities-candles-month.json',
+        },
+        securitiesCandlesNormalized: 'dist/candles/securities-candles-normalized.json'
     },
-    simulationResultsDir: './results'
+    simulationResultsDir: 'results'
 };
-
-for (const pathName in CONFIG.cache) {
-    CONFIG.cache[pathName] = './cache/' + CONFIG.cache[pathName];
-}
 
 export default CONFIG;

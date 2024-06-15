@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Графики</title>
+    <script src="./bundle.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            padding: 10px;
+        }
+
+        .hide {
+            display: none;
+        }
+
+        .chart {
+            margin-bottom: 15px;
+        }
+
+        .chart__wrapper {
+            width: 100%;
+        }
+
+        .horizontal {
+            display: flex;
+            flex-direction: row;
+            justify-content: start;
+        }
+
+        .ml-5 {
+            margin-left: 5px;
+        }
+
+        h1 {
+            margin-bottom: 10px;
+        }
+
+        h3 {
+            margin-bottom: 7px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="securities"></div>
+
+    <div id="elements" class="hide">
+        <div class="security-data">
+            <a href="javascript:void(0)">
+                <h1 class="security-data__name"></h1>
+            </a>
+            <div class="security-data__body hide">
+                <!-- slider[] | button[] -->
+                <div class="horizontal">
+                    <button class="security-data__auto-count">Подобрать значения</button>
+                    <p class="security-data__auto-count-status ml-5 hide"></p>
+                </div>
+                <div class="security-data__charts">
+                    <!-- chart[] -->
+                </div>
+            </div>
+        </div>
+
+        <div class="chart chart--line">
+            <h3 class="chart__name"></h3>
+            <div class="chart__wrapper">
+                <canvas class="chart__image" width="4" height="1"></canvas>
+            </div>
+        </div>
+
+        <div class="chart chart--scatter">
+            <h3 class="chart__name"></h3>
+            <div class="chart__wrapper">
+                <canvas class="chart__image" width="8" height="1"></canvas>
+            </div>
+        </div>
+
+        <div class="slider horizontal">
+            <label class="slider__name"></label>
+            <input class="slider__input ml-5" type="range" min="0" max="1" step="0.01" value="0" onchange="">
+            <p class="slider__value ml-5"></p>
+        </div>
+    </div>
+</body>
+
+</html>

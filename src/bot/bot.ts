@@ -1,18 +1,18 @@
-import { compare, floor, max } from "mathjs";
 import { SecuritiesBag, SecurityAmounts } from "./securities-bag";
-import { Brain } from "./brain";
-import { CandlesMap, SecuritiesPrices } from "../exchange/exchange-simulator";
+import { Brain, BrainDecision } from './brain';
+import { SecuritiesPrices, SecurityId } from "../exchange/exchange-simulator";
+import { compare } from "../utils";
+import { NormalizedCandle } from '../types';
 
 export type Action = 'buy' | 'sell' | 'nothing';
 
 export type BotDecision = {
-    securityIndex: number
     securityAmount: number
     action: Action,
 }
 
 export class ExchangeBot {
-    private brain: Brain;
+    public brain: Brain;
     private moneyAmount: number;
     public securities: SecuritiesBag;
 
@@ -25,60 +25,75 @@ export class ExchangeBot {
         this.securities = new SecuritiesBag(securitiesCount);
     }
 
-    mutate(mutationRate: number) {
-        this.brain = this.brain.mutate(mutationRate);
+    mutate(mutationRate: number, mutationBias: number): ExchangeBot {
+        this.brain = this.brain.mutate(mutationRate, mutationBias);
+        return this;
     }
 
-    decide(
+    securityDecide(
         currentTime: number,
-        securityIndex: number,
-        prices: SecuritiesPrices,
-        candles: CandlesMap
+        index: SecurityId,
+        price: number,
+        securityCandles: NormalizedCandle[]
     ): BotDecision {
-        const decision = this.brain.decide(currentTime, this.moneyAmount, this.securities.getAmount(securityIndex), securityIndex, prices, candles);
-        
+        const availableAmount = this.securities.getAmount(index);
+        const decision = this.brain.decide(currentTime, this.moneyAmount, availableAmount, securityCandles);
+
+        return this.handleBrainDecision(decision, price, availableAmount);
+    }
+
+    handleBrainDecision(decision: BrainDecision, price: number, availableAmount: number): any {
         let action: Action = 'nothing';
         let securityAmount = 0;
-        const actionProbability = max(decision.buyProbability, decision.sellProbability, decision.nothingProbability);
+        const actionProbability = Math.max(decision.buyProbability, decision.sellProbability, decision.nothingProbability);
         if (compare(actionProbability, decision.buyProbability) === 0) {
             // Сделаем ограничение на покупку только целого кол-ва бумаги 
-            securityAmount = floor(this.moneyAmount / prices.get(securityIndex) * decision.securityProportion)            
-            if (securityAmount > 0) {
+            securityAmount = Math.floor(this.moneyAmount / price * decision.securityProportion)            
+            if (securityAmount > 0 && this.canBuy(price, securityAmount)) {
                 action = 'buy';
             }
         } else if (compare(actionProbability, decision.sellProbability) === 0) {
             // Сделаем ограничение на продажу только целого кол-ва бумаги 
-            securityAmount = floor(this.securities.getAmount(securityIndex) * decision.securityProportion);
-            if (securityAmount > 0) {
+            securityAmount = Math.floor(availableAmount * decision.securityProportion);
+            if (securityAmount > 0 && this.canSell(price, securityAmount)) {
                 action = 'sell';
             }
         }
 
         return {
-            securityIndex,
             securityAmount,
             action
         };
     }
 
-    canBuy(securityPrice: number): boolean {
-        return this.moneyAmount > securityPrice;
+    canBuy(securityPrice: number, amount = 1): boolean {
+        return this.moneyAmount > securityPrice * amount;
     }
 
-    canSell(securityIndex: number): boolean {
-        return this.securities.getAmount(securityIndex) > 0;
+    canSell(securityIndex: SecurityId, amount = 1): boolean {
+        return this.securities.getAmount(securityIndex) >= amount;
     }
 
-    doBuy(time: number, securityIndex: number, price: number, securityAmount: number) {
+    buy(time: number, securityIndex: SecurityId, price: number, securityAmount: number): boolean {
+        if (!this.canBuy(price, securityAmount)) {
+            return false;
+        }
+        
         this.securities.buy(time, securityIndex, securityAmount);
-
         this.moneyAmount -= price * securityAmount;
+
+        return true;
     }
 
-    doSell(time: number, securityIndex: number, price: number, securityAmount: number) {
-        this.securities.sell(time, securityIndex, securityAmount);
+    sell(time: number, securityIndex: SecurityId, price: number, securityAmount: number): boolean {
+        if (!this.canSell(price, securityAmount)) {
+            return false;
+        }
 
+        this.securities.sell(time, securityIndex, securityAmount);
         this.moneyAmount += price * securityAmount;
+
+        return true;
     }
 
     getSecuritiesCurrencyAmount(prices: SecuritiesPrices): number {
@@ -91,9 +106,5 @@ export class ExchangeBot {
 
     getMoneyAmount(): number {
         return this.moneyAmount;
-    }
-
-    getBrain() {
-        return this.brain;
     }
 }
