@@ -1,6 +1,6 @@
 import $ from "jquery";
 import { Component } from "./component";
-import { CANDLE_INDEX_CLOSE, CANDLE_INDEX_END, Candle } from "../types";
+import { CANDLE_INDEX_CLOSE, CANDLE_INDEX_END, Candle, NumberArray } from "../types";
 import { LineMultiChart } from "./chart/line-multi-chart";
 import { Slider } from "./slider";
 import { ScatterMultiChart } from "./chart/scatter-multi-chart";
@@ -9,15 +9,22 @@ import { CandlesAnalytics } from "../service/candles-analytics";
 import { Point } from "./chart/multi-chart";
 
 const EPSILON = 0.00000001;
-const PREDICT_COUNT = 3 * 365;
+const PREDICT_COUNT = 365;
 
 type GraphPlaceParams = {
-    toEnd?: boolean
+    fromEnd?: boolean,
+    bias?: number
 };
 
-type SliderUpdates = {
-    predictBasisBufferPower?: number
-    minFrequencyValue?: number
+type ChartsUpdates = {
+    frequencies?: number[],
+    amplitudes?: number[],
+};
+
+type ApproximationUpdates = {
+    predictBasisBufferPower?: number,
+    minAmplitudeValue?: number,
+    dateBias?: number,
 };
 
 type Parameters = {
@@ -29,12 +36,20 @@ export class SecurityData extends Component<Parameters> {
     private candles: Candle[];
 
     private predictBasisBufferPower: number = 10;
-    private minFrequencyValue?: number;
+    private minAmplitudeValue: number | undefined;
+    private dateBias: number = 0;
 
     private graphLabels: string[];
     private fft: typeof FFT;
     private frequencies: number[];
     private amplitudes: number[];
+
+    private graphChart: LineMultiChart;
+    private frequenciesChart: ScatterMultiChart;
+
+    private predictBasisBufferPowerSlider: Slider;
+    private approximationDateBiasSlider: Slider;
+    private minFrequencySlider: Slider;
 
     constructor(
         securityId: string,
@@ -59,8 +74,8 @@ export class SecurityData extends Component<Parameters> {
         this.$body.find('.security-data__name')
             .on('click', this.updateTitle.bind(this))
             .on('click', this.toggleCharts.bind(this));
-            
-        this.$body.find(`.${this.type}__auto-count`)
+
+        this.getElement('auto-count')
             .on('click', this.autoCount.bind(this))
     }
 
@@ -74,7 +89,7 @@ export class SecurityData extends Component<Parameters> {
     }
 
     private toggleCharts(e): void {
-        this.$body.find(`.${this.type}__body`).toggleClass('hide');
+        this.getElement('body').toggleClass('hide');
 
         if (this.$body.data('chartsDisplayed')) {
             return;
@@ -82,45 +97,37 @@ export class SecurityData extends Component<Parameters> {
         this.$body.data('chartsDisplayed', true);
 
         this.graphLabels = SecurityData.getExtendedGraphLabels(
-            this.candles.map(candle =>
-                candle[CANDLE_INDEX_END].slice(0, 10)
-            ),
+            this.candles.map(candle => candle[CANDLE_INDEX_END].slice(0, 10)),
             PREDICT_COUNT
         );
 
-        const graphChart = new LineMultiChart(
+        const {
+            frequencies,
+            amplitudes
+        } = this.updateFFTApproximationData();
+
+        this.graphChart = new LineMultiChart(
             'График',
             this.graphLabels,
             [{
                 label: 'График',
                 /** @ts-ignore-next-line */
-                data: SecurityData.formatGraphData(
-                    this.candles.map(candle => candle[CANDLE_INDEX_CLOSE]),
-                    this.graphLabels
-                )
+                data: this.getClosingsGraph()
+            }, {
+                label: 'Аппроксимация',
+                /** @ts-ignore-next-line */
+                data: this.getApproximationGraph(PREDICT_COUNT, frequencies)
             }]
         );
-        graphChart.$body.appendTo(this.$body.find(`.${this.type}__charts`));
 
-        const {
-            approximationGraph,
-            frequencies,
-            amplitudes
-        } = this.updateFFTApproximation();
-
-        const frequenciesChart = new ScatterMultiChart('Частоты', [{
+        this.frequenciesChart = new ScatterMultiChart('Частоты', [{
             label: 'Частоты',
             data: SecurityData.formatGraphData(amplitudes, frequencies)
         }]);
-        frequenciesChart.$body.appendTo(this.$body.find('.charts'));
-
-        /** @ts-ignore-next-line */
-        graphChart.add('Аппроксимация', approximationGraph);
 
         const maxAmplitude = Math.max(...this.amplitudes);
         const avgAmplitude = maxAmplitude / (this.fft.bufferSize >> 1);
-
-        const minFrequencySlider = new Slider(
+        this.minFrequencySlider = new Slider(
             'Минимальная амплитуда',
             avgAmplitude * 40,
             0,
@@ -128,33 +135,47 @@ export class SecurityData extends Component<Parameters> {
             avgAmplitude * 50
         );
 
-        minFrequencySlider.$body.find('.slider__input').on('change', e => {
+        this.minFrequencySlider.getElement('input').on('change', e => {
             const $target = $(e.target)
-            const minFrequencyValue = +$target.val();
+            const minAmplitudeValue = +$target.val();
 
-            minFrequencySlider.update();
+            // todo
+            this.minFrequencySlider.update({ input: minAmplitudeValue });
 
             const {
-                approximationGraph,
                 frequencies,
                 amplitudes
-            } = this.updateFFTApproximation({ minFrequencyValue });
+            } = this.updateFFTApproximationData({ minAmplitudeValue });
 
-            graphChart.updateChart(chart => {
-                /** @ts-ignore-next-line */
-                chart.data.datasets[1].data = approximationGraph;
-            });
-
-            frequenciesChart.updateChart(chart => {
-                /** @ts-ignore-next-line */
-                chart.data.datasets[0].data = SecurityData.formatGraphData(
-                    amplitudes,
-                    frequencies
-                );
-            });
+            this.updateCharts({ frequencies, amplitudes });
         });
 
-        const predictBasisBufeerPowerSlider = new Slider(
+        const bufferSize = Math.pow(2, this.predictBasisBufferPower);
+        this.approximationDateBiasSlider = new Slider(
+            'Смещение аппроксимации',
+            0,
+            -Math.min(bufferSize, this.candles.length - bufferSize),
+            14,
+            0
+        );
+
+        this.approximationDateBiasSlider.getElement('input').on('change', e => {
+            const $target = $(e.target)
+            const bias = +$target.val();
+
+            // todo
+            this.approximationDateBiasSlider.update({ input: bias });
+
+            const {
+                frequencies,
+                amplitudes
+            } = this.updateFFTApproximationData({ dateBias: bias });
+
+            this.updateMinFrequencySlider();
+            this.updateCharts({ frequencies, amplitudes });
+        });
+
+        this.predictBasisBufferPowerSlider = new Slider(
             'Степень буфера для предсказания',
             this.predictBasisBufferPower,
             7,
@@ -162,44 +183,38 @@ export class SecurityData extends Component<Parameters> {
             CandlesAnalytics.getClosestDownwardPower2(this.candles.length)
         );
 
-        predictBasisBufeerPowerSlider.$body.find('.slider__input').on('change', e => {
+        this.predictBasisBufferPowerSlider.getElement('input').on('change', e => {
             const $target = $(e.target)
-            const predictBasisBufferPower = +$target.val();
+            const power = +$target.val();
 
-            predictBasisBufeerPowerSlider.update();
+            // todo
+            this.predictBasisBufferPowerSlider.update({ input: power });
+
+            this.updateMinFrequencySlider();
+            this.updateApproximationDateBiasSlider();
 
             const {
-                approximationGraph,
                 frequencies,
                 amplitudes
-            } = this.updateFFTApproximation({ predictBasisBufferPower });
-
-            const maxAmplitude = Math.max(...this.amplitudes);
-            const avgAmplitude = maxAmplitude / (this.fft.bufferSize >> 1);
-
-            minFrequencySlider.update({
-                input: { value: avgAmplitude * 40 },
-                min: { value: 0 },
-                step: { value: maxAmplitude / 1000 },
-                max: { value: avgAmplitude * 50 }
+            } = this.updateFFTApproximationData({
+                predictBasisBufferPower: power,
+                dateBias: this.approximationDateBiasSlider.getValue<number>('input'),
+                minAmplitudeValue: this.minFrequencySlider.getValue<number>('input')
             });
 
-            graphChart.updateChart(chart => {
-                /** @ts-ignore-next-line */
-                chart.data.datasets[1].data = approximationGraph;
-            });
-
-            frequenciesChart.updateChart(chart => {
-                chart.data.datasets[0].data = SecurityData.formatGraphData(
-                    amplitudes,
-                    frequencies
-                );
-            });
+            this.updateCharts({ frequencies, amplitudes });
         });
 
-        const $securityDataBody = this.$body.find(`.${this.type}__body`);
-        $securityDataBody.prepend(predictBasisBufeerPowerSlider.$body);
-        $securityDataBody.prepend(minFrequencySlider.$body);
+        this.getElement('charts').append(
+            this.graphChart.$body,
+            this.frequenciesChart.$body
+        );
+
+        this.getElement('body').prepend(
+            this.predictBasisBufferPowerSlider.$body,
+            this.approximationDateBiasSlider.$body,
+            this.minFrequencySlider.$body,
+        );
     }
 
     private static getExtendedGraphLabels(initialDates: string[], predictCount: number): string[] {
@@ -220,35 +235,138 @@ export class SecurityData extends Component<Parameters> {
     }
 
     private autoCount(e) {
+        const $autoCountStatus = this.getElement('auto-count-status');
 
+        const updateAutoCountPercent = (percent) => $autoCountStatus.text(`Подсчет ${percent}%...`);
+
+        updateAutoCountPercent(0);
+        $autoCountStatus.toggleClass('hide');
+
+        const minPower = this.predictBasisBufferPowerSlider.getValue<number>('min');
+        const maxPower = this.predictBasisBufferPowerSlider.getValue<number>('max');
+        const DATE_BIAS_DIFF = -14;
+
+        let bestResult: any = {
+            error: Number.MAX_VALUE
+        };
+
+        for (let power = minPower, i = 0; power <= maxPower; power++, i++) {
+            // Либо проходимся по всему буферу, либо до конца свеч
+            const bufferSize = Math.pow(2, power);
+            const maxDateBias = -Math.min(this.candles.length - bufferSize, 2 * bufferSize);
+
+            for (let dateBias = -365; dateBias > maxDateBias; dateBias += DATE_BIAS_DIFF) {
+                this.updateFFTApproximationData({
+                    predictBasisBufferPower: power,
+                    dateBias
+                });
+
+                const maxAmplitude = Math.max(...this.amplitudes);
+                const avgAmplitude = maxAmplitude / (this.fft.bufferSize >> 1);
+
+                let prevFrequenciesCount = this.fft.real.length;
+                for (
+                    let minAmplitudeMultiplier = 1;
+                    avgAmplitude * minAmplitudeMultiplier < maxAmplitude;
+                    minAmplitudeMultiplier += 1
+                ) {
+                    const { frequencies } = this.updateFFTApproximationData({
+                        minAmplitudeValue: avgAmplitude * minAmplitudeMultiplier
+                    });
+
+                    if (frequencies.length === prevFrequenciesCount) {
+                        continue;
+                    }
+                    prevFrequenciesCount = frequencies.length;
+
+                    if (frequencies.length <= 2) {
+                        break;
+                    }
+
+                    const error = CandlesAnalytics.countRootMeanSquareError(
+                        this.candles.slice(this.candles.length + dateBias).map(c => c[CANDLE_INDEX_CLOSE]),
+                        this.getFFTApproximation(-dateBias, frequencies)
+                    );
+
+                    // console.log({error, power, dateBias, minAmplitudeMultiplier, frequenciesLength: frequencies.length});
+
+                    if (error < bestResult.error) {
+                        bestResult = {
+                            error,
+                            power,
+                            dateBias,
+                            minAmplitudeMultiplier,
+                            fft: this.fft,
+                            frequencies: this.frequencies,
+                            amplitudes: this.amplitudes,
+                        };
+                    }
+                }
+            }
+
+            updateAutoCountPercent(i / (maxPower - minPower));
+        }
+
+        $autoCountStatus.text('Применение лучшего результата...');
+
+        // Подставляем сохраненные данные, чтобы не пересчитывать fft
+        this.predictBasisBufferPower = bestResult.power;
+        this.predictBasisBufferPowerSlider.update({ input: bestResult.power });
+        this.minAmplitudeValue = undefined;
+
+        this.dateBias = bestResult.dateBias;
+
+        this.fft = bestResult.fft;
+        this.frequencies = bestResult.frequencies;
+        this.amplitudes = bestResult.amplitudes;
+
+        const { maxAmplitude, avgAmplitude } = this.updateMinFrequencySlider();
+
+        this.approximationDateBiasSlider.update({
+            input: this.dateBias
+        });
+        this.updateApproximationDateBiasSlider();
+
+        // Заново фильтруем частоты
+        const {
+            frequencies,
+            amplitudes
+        } = this.updateFFTApproximationData({
+            minAmplitudeValue: avgAmplitude * bestResult.minAmplitudeMultiplier
+        });
+
+        this.updateCharts({ amplitudes, frequencies });
+
+        $autoCountStatus.toggleClass('hide');
     }
 
-    private updateFFTApproximation(updates?: SliderUpdates): {
-        approximationGraph: Point[],
+    private updateFFTApproximationData(updates?: ApproximationUpdates): {
         frequencies: number[],
         amplitudes: number[],
     } {
         const newPredictBasisBufferPower = updates?.predictBasisBufferPower || this.predictBasisBufferPower;
-        let newMinFrequencyValue = updates?.minFrequencyValue || this.minFrequencyValue;
+        let newMinAmplitudeValue = updates?.minAmplitudeValue || this.minAmplitudeValue;
+        let dateBias = updates?.dateBias || this.dateBias;
 
-        const firstTime = !newMinFrequencyValue;
-        let needFrequenciesFilter = false;
+        const firstTime = !newMinAmplitudeValue;
+        let needUpdateFrequenciesFilter = false;
 
-        if (firstTime || this.predictBasisBufferPower !== newPredictBasisBufferPower) {
+        if (
+            firstTime
+            || this.predictBasisBufferPower !== newPredictBasisBufferPower
+            || this.dateBias !== dateBias
+        ) {
             this.predictBasisBufferPower = newPredictBasisBufferPower;
-            needFrequenciesFilter = true;
+            this.dateBias = dateBias;
+            needUpdateFrequenciesFilter = true;
 
-            const bufferSize = 2 ** newPredictBasisBufferPower;
+            const bufferSize = Math.pow(2, newPredictBasisBufferPower);
             const halfBufferSize = bufferSize >> 1;
 
-            this.fft = CandlesAnalytics.countFFT(this.candles, bufferSize);
-
-            if (this.frequencies) {
-                this.frequencies.length = 0;
-            }
-            if (this.amplitudes) {
-                this.amplitudes.length = 0;
-            }
+            this.fft = CandlesAnalytics.countFFT(this.candles.slice(
+                this.candles.length - bufferSize + dateBias,
+                this.candles.length + dateBias
+            ));
 
             this.frequencies = new Array<number>(halfBufferSize);
             this.amplitudes = new Array<number>(halfBufferSize);
@@ -260,87 +378,159 @@ export class SecurityData extends Component<Parameters> {
             if (firstTime) {
                 const maxAmplitude = Math.max(...this.amplitudes);
                 const avgAmplitude = maxAmplitude / halfBufferSize;
-                this.minFrequencyValue = newMinFrequencyValue = avgAmplitude * 25;
+                this.minAmplitudeValue = newMinAmplitudeValue = avgAmplitude * 25;
             }
         }
 
         let frequencies = this.frequencies;
         let amplitudes = this.amplitudes;
         if (
-            needFrequenciesFilter
-            || this.minFrequencyValue !== newMinFrequencyValue
+            needUpdateFrequenciesFilter
+            || this.minAmplitudeValue !== newMinAmplitudeValue
         ) {
-            this.minFrequencyValue = newMinFrequencyValue;
+            this.minAmplitudeValue = newMinAmplitudeValue;
 
-            if (newMinFrequencyValue > EPSILON) {
+            if (newMinAmplitudeValue > EPSILON) {
                 frequencies = this.frequencies.filter((_, i) =>
-                    this.amplitudes[i] >= newMinFrequencyValue
+                    this.amplitudes[i] >= newMinAmplitudeValue
                 );
 
                 amplitudes = this.amplitudes.filter(x =>
-                    x >= newMinFrequencyValue
+                    x >= newMinAmplitudeValue
                 );
             }
         }
 
-        const approximationGraph = SecurityData.formatGraphData(
-            this.getApproximationGraph(PREDICT_COUNT, frequencies),
-            this.graphLabels,
-            { toEnd: true }
-        );
-
         return {
-            approximationGraph,
             frequencies,
             amplitudes,
         };
     };
 
+    private updateCharts(updates: ChartsUpdates): void {
+        const frequencies = updates?.frequencies || this.frequencies;
+        const amplitudes = updates?.amplitudes || this.amplitudes;
+
+        this.graphChart.updateChart(chart => {
+            /** @ts-ignore-next-line */
+            chart.data.datasets[1].data = this.getApproximationGraph(PREDICT_COUNT, frequencies);
+        });
+
+        this.frequenciesChart.updateChart(chart => {
+            /** @ts-ignore-next-line */
+            chart.data.datasets[0].data = SecurityData.formatGraphData(amplitudes, frequencies);
+        });
+    }
+
+    private updateMinFrequencySlider(): {
+        maxAmplitude: number,
+        avgAmplitude: number,
+    } {
+        const maxAmplitude = Math.max(...this.amplitudes);
+        const avgAmplitude = maxAmplitude / (this.fft.bufferSize >> 1);
+        this.minFrequencySlider.update({
+            input: avgAmplitude * 40,
+            step: maxAmplitude / 1000,
+            max: avgAmplitude * 50,
+        });
+
+        return {
+            maxAmplitude,
+            avgAmplitude,
+        }
+    }
+
+    private updateApproximationDateBiasSlider(): void {
+        const bufferSize = Math.pow(2, this.predictBasisBufferPower);
+        const minValue = bufferSize - this.candles.length;
+
+        this.approximationDateBiasSlider.update({
+            input: Math.max(
+                minValue,
+                this.approximationDateBiasSlider.getValue<number>('input')
+            ),
+            min: minValue,
+        });
+    }
+
+    private getClosingsGraph(): Point[] {
+        return SecurityData.formatGraphData(
+            this.candles.map(candle => candle[CANDLE_INDEX_CLOSE]),
+            this.graphLabels
+        )
+    }
+
     /** Берем последние predictCount свеч из графика и экстраполируем на predictCount периодов */
-    private getApproximationGraph(predictCount: number, frequencies: number[]): Float64Array {
+    private getApproximationGraph(predictCount: number, frequencies: number[]): Point[] {
+        const halfBufferSize = this.fft.real.length;
+        const fftApproximation = this.getFFTApproximation(halfBufferSize + predictCount - this.dateBias, frequencies);
+
+        return SecurityData.formatGraphData(
+            fftApproximation,
+            this.graphLabels,
+            {
+                fromEnd: true,
+                // bias: this.dateBias,
+            }
+        );
+    }
+
+    private getFFTApproximation(length: number, frequencies: number[]): Float64Array {
         const TWO_PI = 2 * Math.PI;
 
         const halfBufferSize = this.fft.real.length;
-        
-        // const halfBufferSize = this.fft.bufferSize;
         const real = this.fft.real;
         const imag = this.fft.imag;
-
         const bSi = 2 / halfBufferSize;
-        const approximationGraph = new Float64Array(halfBufferSize + predictCount);
+
+        const approximation = new Float64Array(length);
+
+        // Ф-ция периодическая, поэтому вычисляем максимум до halfBufferSize, а дальше копируем если нужно
+        const countLength = Math.min(length, halfBufferSize);
 
         if (frequencies[0] === 0) {
             // Значение 0 в массиве частот - смещение графика по y
             const yBias = bSi / 2 * Math.sqrt(real[0] * real[0] + imag[0] * imag[0]);
-            
-            approximationGraph.forEach((_, i) => {
-                approximationGraph[i] += yBias;
-            });
+
+            for (let x = 0; x < countLength; x++) {
+                approximation[x] += yBias;
+            }
         }
 
-        approximationGraph.forEach((y, x) => {
+        for (let x = 0; x < countLength; x++) {
             frequencies.forEach(frequency => {
                 if (frequency === 0) {
                     return;
                 }
 
                 const argument = (TWO_PI * frequency / halfBufferSize) * x;
-                approximationGraph[x] += bSi * (real[frequency] * Math.cos(argument) - imag[frequency] * Math.sin(argument));
+                approximation[x] += bSi * (real[frequency] * Math.cos(argument) - imag[frequency] * Math.sin(argument));
             });
-        });
+        }
 
-        return approximationGraph;
+        if (length > countLength) {
+            for (let x = countLength; x < length; x++) {
+                approximation[x] = approximation[x % countLength];
+            }
+        }
+
+        return approximation;
     }
 
-    private static formatGraphData(data: number[] | Float64Array, labels: (number | string)[], params?: GraphPlaceParams): Point[] {
+    private static formatGraphData(data: NumberArray, labels: (number | string)[], params?: GraphPlaceParams): Point[] {
         const graph = new Array<Point>(data.length);
 
         let start = 0;
         let end = data.length;
 
-        if (params?.toEnd) {
+        if (params?.fromEnd) {
             start = labels.length - 1 - data.length;
             end = labels.length - 1;
+        }
+
+        if (params?.bias) {
+            start += params.bias;
+            end += params.bias;
         }
 
         for (let i = start, j = 0; i < end; i++, j++) {

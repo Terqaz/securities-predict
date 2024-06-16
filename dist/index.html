@@ -38,6 +38,10 @@
             margin-left: 5px;
         }
 
+        .mb-5 {
+            margin-bottom: 5px;
+        }
+
         h1 {
             margin-bottom: 10px;
         }
@@ -58,7 +62,7 @@
             </a>
             <div class="security-data__body hide">
                 <!-- slider[] | button[] -->
-                <div class="horizontal">
+                <div class="horizontal mb-5">
                     <button class="security-data__auto-count">Подобрать значения</button>
                     <p class="security-data__auto-count-status ml-5 hide"></p>
                 </div>
@@ -82,10 +86,12 @@
             </div>
         </div>
 
-        <div class="slider horizontal">
+        <div class="slider mb-5">
             <label class="slider__name"></label>
-            <input class="slider__input ml-5" type="range" min="0" max="1" step="0.01" value="0" onchange="">
-            <p class="slider__value ml-5"></p>
+            <div class="horizontal">
+                <input class="slider__input" type="range" min="0" max="1" step="0.01" value="0" onchange="">
+                <p class="slider__value ml-5"></p>
+            </div>
         </div>
     </div>
 </body>

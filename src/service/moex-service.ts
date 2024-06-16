@@ -5,7 +5,7 @@ import MOEX_CLIENT from "../clients/moex-client";
 import { CANDLE_INDEX_BEGIN, Candle, SecuritiesCandles } from "../types";
 import { readJsonFile, writeJsonFile } from "../utils";
 
-export async function getDaySecuritiesCandles(dateFrom = undefined, reload = false): Promise<SecuritiesCandles> {
+export async function getDaySecuritiesCandles(dateFrom: Date = undefined, reload = false): Promise<SecuritiesCandles> {
     if (!fs.existsSync(CONFIG.cacheFilepaths.securitiesCandles.day) || reload) {
         if (reload) {
             console.log(`Обновление кэша свеч...`);

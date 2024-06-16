@@ -7,25 +7,25 @@ import { SecurityData } from "./element/security-data";
 export type SecuritiesCandlesArray = [string, Candle[]][];
 
 async function init() {
-  getNormalizedSecuritiesData(getDaySecuritiesCandles())
-    .then(prepareToShow)
-    .then(showProcessedData)
+    getNormalizedSecuritiesData(getDaySecuritiesCandles())
+        .then(prepareToShow)
+        .then(showProcessedData)
 }
 
 async function getDaySecuritiesCandles(): Promise<SecuritiesCandles> {
-  return axios.get('candles/securities-candles-day.json')
-    .then((response): SecuritiesCandles => {
-      return response.data
-    });
+    return axios.get('candles/securities-candles-day.json')
+        .then((response): SecuritiesCandles => {
+            return response.data
+        });
 }
 
 /** Получить нормализованные тренды по ценным бумагам  */
 export async function getNormalizedSecuritiesData(candlesPromise: Promise<SecuritiesCandles>): Promise<SecuritiesCandlesArray> {
-  return candlesPromise
-      .then(toEntries)
-      .then(candlesBySecurity => candlesBySecurity.filter(([securityId, _]) => ['SBER'].includes(securityId)))
-      .then(candlesBySecurity => filterByMinCandlesCount(candlesBySecurity, 2 ** 12))
-      .then(normalizeAllClosings);
+    return candlesPromise
+        .then(toEntries)
+        // .then(candlesBySecurity => candlesBySecurity.filter(([securityId, _]) => ['MOEX'].includes(securityId)))
+        .then(candlesBySecurity => filterByMinCandlesCount(candlesBySecurity, 2 ** 8))
+        .then(normalizeAllClosings);
 }
 
 /** Получить тренд по всему рынку. Нормализация в процессе необходима */
@@ -68,32 +68,33 @@ export async function getNormalizedSecuritiesData(candlesPromise: Promise<Securi
 // }
 
 function normalizeAllClosings(candlesBySecurity: SecuritiesCandlesArray): SecuritiesCandlesArray {
-  return candlesBySecurity
-      .map(([securityId, candles]) => [securityId, normalizeClosings(candles)]);
+    return candlesBySecurity
+        .map(([securityId, candles]) => [securityId, normalizeClosings(candles)]);
 }
 
 function normalizeClosings(candles: Candle[]): Candle[] {
-  let closingsSum = 0;
-  candles.forEach(candle => closingsSum += Math.abs(candle[CANDLE_INDEX_CLOSE]));
+    const closingsMax = Math.max(...candles.map(candle => Math.abs(candle[CANDLE_INDEX_CLOSE])));
 
-  const normalizedCandles = structuredClone(candles);
-  normalizedCandles.forEach((candle, i) => normalizedCandles[i][CANDLE_INDEX_CLOSE] /= closingsSum);
-  return normalizedCandles;
+    const normalizedCandles = candles;
+    // const normalizedCandles = structuredClone(candles);
+    normalizedCandles.forEach((candle, i) => normalizedCandles[i][CANDLE_INDEX_CLOSE] /= closingsMax);
+    
+    return normalizedCandles;
 }
 
 function filterByMinCandlesCount(candlesBySecurity: SecuritiesCandlesArray, minCandlesCount: number): SecuritiesCandlesArray {
-  return candlesBySecurity
-      .filter(([securityId, candles]) => {
-          if (candles.length < minCandlesCount) {
-              console.log(`График ${securityId} пропущен. Кол-во свечей ${candles.length} < ${minCandlesCount}`);
-          }
+    return candlesBySecurity
+        .filter(([securityId, candles]) => {
+            // if (candles.length < minCandlesCount) {
+            //     console.log(`График ${securityId} пропущен. Кол-во свечей ${candles.length} < ${minCandlesCount}`);
+            // }
 
-          return candles.length >= minCandlesCount;
-      });
+            return candles.length >= minCandlesCount;
+        });
 }
 
 function toEntries(obj: object) {
-  return Object.entries(obj);
+    return Object.entries(obj);
 }
 
 // function getStockTrendCandles(candlesBySecurity: SecuritiesCandlesArray, minCandlesCount: number): SecuritiesCandlesArray {
@@ -108,34 +109,34 @@ function toEntries(obj: object) {
 // }
 
 function prepareToShow(candlesData: SecuritiesCandlesArray): SecuritiesCandlesArray {
-  return candlesData
-    // .map(({ securityId, candles, spectrum, fft }) => {
-    //   const bufferSize = candles.length;
-    //   const amplitudesSum = spectrum.reduce((a, b) => a + Math.abs(b));
-    //   const avgAmplitude = amplitudesSum / bufferSize;
+    return candlesData
+        // .map(({ securityId, candles, spectrum, fft }) => {
+        //   const bufferSize = candles.length;
+        //   const amplitudesSum = spectrum.reduce((a, b) => a + Math.abs(b));
+        //   const avgAmplitude = amplitudesSum / bufferSize;
 
-    //   const frequenciesDots: Dots = [];
-    //   spectrum.forEach((x, i) => frequenciesDots.push([i, x]))
+        //   const frequenciesDots: Dots = [];
+        //   spectrum.forEach((x, i) => frequenciesDots.push([i, x]))
 
-    //   return {
-    //     securityId,
-    //     candles,
-    //     fft
-    //   };
-    // })
-    .sort(([_, candles1], [_2, candles2]) => {
-      return candles2.length - candles1.length
-    });
+        //   return {
+        //     securityId,
+        //     candles,
+        //     fft
+        //   };
+        // })
+        .sort(([_, candles1], [_2, candles2]) => {
+            return candles2.length - candles1.length
+        });
 }
 
 /** Выводим обработанные данные */
 function showProcessedData(securitiesCandles: SecuritiesCandlesArray): void {
-  securitiesCandles
-    .forEach(([securityId, candles]) => {
-      const securityData = new SecurityData(securityId, candles);
+    securitiesCandles
+        .forEach(([securityId, candles]) => {
+            const securityData = new SecurityData(securityId, candles);
 
-      securityData.$body.appendTo($('#securities'));
-    });
+            securityData.$body.appendTo($('#securities'));
+        });
 }
 
 init();

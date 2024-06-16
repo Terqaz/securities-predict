@@ -29,10 +29,9 @@ export type ParameterSettings<TParams> = {
     [key in keyof TParams]: ParameterSetting
 };
 
-export type UpdatedParameters<TParams> = { [param in keyof TParams]?: {
-    value: string | number,
-    type?: ParameterType
-} };
+export type UpdatedParameters<TParams> = {
+    [param in keyof TParams]?: string | number
+};
 
 export class Component<TParams extends Parameters> {
     protected type: string;
@@ -66,8 +65,8 @@ export class Component<TParams extends Parameters> {
 
     update(params?: UpdatedParameters<TParams>): void {
         if (params) {
-            Object.entries(params).forEach(([param, { value, type }]) => {
-                this.updateValue(param, value, type);
+            Object.entries(params).forEach(([param, value]) => {
+                this.updateValue(param, value);
             });
         }
 
@@ -81,46 +80,15 @@ export class Component<TParams extends Parameters> {
     protected postChange(): void {
     }
 
-    private setValue(param: string, newValue: string | number, type: ParameterType) {
-        if (['attr', 'data-attr'].includes(type)) {
-            let $attrChangingElement = this.$body;
-
-            const to = (this.params[param] as AttrParameterSetting)?.to;
-            if (to) {
-                $attrChangingElement = this.getElement(to);
-            }
-
-            if (type === 'attr') {
-                $attrChangingElement.attr(param, newValue);
-            } else if (type === 'data-attr') {
-                $attrChangingElement.data(param, newValue);
-            }
-
-            return;
-        }
-
-        const $element = this.getElement(param);
-
-        if (!type || type === 'text') {
-            $element.text(newValue);
-        } else if (type === 'value') {
-            $element.val(newValue);
-        }
-    }
-
     /**
      * Обновить значение в HTML элементе. Можно задать новое значение и использовать другой тип подстановки значения, если значение не задано первоначально
      */
-    protected updateValue<TParams extends Parameters>(param: keyof TParams, newValue: string | number | undefined, type: ParameterType = 'text'): void {
-        if (typeof (param) !== 'string') {
-            return;
-        }
-
+    protected updateValue(param: keyof TParams, newValue: string | number | undefined, type: ParameterType = 'text'): void {
         if (!this.params[param]) {
             if (newValue === undefined) {
                 throw new Error('Не задано новое значение для установки в компонент напрямую');
             }
-            
+
             this.setValue(param, newValue, type);
 
             return;
@@ -129,14 +97,14 @@ export class Component<TParams extends Parameters> {
         const paramOptions = this.params[param];
 
         if (paramOptions?.readonly) {
-            throw new Error(`Параметр ${this.type}.${param} установлен только для чтения`);
+            throw new Error(`Параметр ${this.type}.${String(param)} установлен только для чтения`);
         }
 
         if (newValue === undefined) {
             newValue = paramOptions?.value;
 
             if (newValue === undefined) {
-                throw new Error(`Значение ${this.type}.${param} не задано`);
+                throw new Error(`Значение ${this.type}.${String(param)} не задано`);
             }
         }
 
@@ -147,15 +115,49 @@ export class Component<TParams extends Parameters> {
         this.setValue(param, newValue, type);
     }
 
-    private getElement(name: string): JQuery<HTMLElement> {
+    private setValue(param: keyof TParams, newValue: string | number, type: ParameterType) {
+        if (this.params[String(param)]) {
+            this.params[String(param)].value = newValue;
+        }
+        
+        if (['attr', 'data-attr'].includes(type)) {
+            let $attrChangingElement = this.$body;
+
+            const to = (this.params[param] as AttrParameterSetting)?.to;
+            if (to) {
+                $attrChangingElement = this.getElement(to);
+            }
+
+            if (type === 'attr') {
+                $attrChangingElement.attr(String(param), newValue);
+            } else if (type === 'data-attr') {
+                $attrChangingElement.data(String(param), newValue);
+            }
+
+            return;
+        }
+
+        const $element = this.getElement(String(param));
+
+        if (!type || type === 'text') {
+            $element.text(newValue);
+        } else if (type === 'value') {
+            // $element.value = newValue;
+            $element.val(newValue);
+        }
+    }
+
+    getElement(name: string): JQuery<HTMLElement> {
         return this.$body.find(`.${this.type}__${name}`);
     }
 
-    getValue(param: string): string | number {
-        if (this.params[param]) {
-            return this.params[param].value
+    getValue<TType extends string | number>(param: keyof TParams): TType {
+        if (this.params[String(param)]) {
+            return this.params[String(param)].value;
         }
 
-        throw new Error(`Параметр ${this.type}.${param} не существует`);
+        throw new Error(`Параметр ${this.type}.${String(param)} не существует`);
     }
+
+
 }

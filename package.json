@@ -8,7 +8,7 @@
     "develop": "webpack-dev-server --mode development",
     "build": "webpack --mode production",
     "start-bots": "npx ts-node ./src/app-bots.ts",
-    "start-fft": "npx ts-node ./src/app-fft.ts",
+    "load-candles": "npx ts-node ./src/load-candles.ts",
     "start-built": "node ./build/app.js"
   },
   "keywords": [],
