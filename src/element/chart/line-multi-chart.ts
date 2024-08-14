@@ -34,17 +34,17 @@ export class LineMultiChart extends MultiChart<ChartType, Parameters> {
             data,
             parsing: false,
             pointRadius: 0,
-            animations: {
-                x: false,
-                colors: false,
-            },
-            transitions: {
-                active: {
-                    animation: {
-                        duration: 0
-                    }
-                }
-            }
+            // animations: {
+            //     x: false,
+            //     colors: false,
+            // },
+            // transitions: {
+            //     active: {
+            //         animation: {
+            //             duration: 100
+            //         }
+            //     }
+            // }
         };
     }
 }

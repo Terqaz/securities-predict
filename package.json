@@ -7,7 +7,6 @@
     "serve": "webpack serve",
     "develop": "webpack-dev-server --mode development",
     "build": "webpack --mode production",
-    "start-bots": "npx ts-node ./src/app-bots.ts",
     "load-candles": "npx ts-node ./src/load-candles.ts",
     "start-built": "node ./build/app.js"
   },
@@ -15,13 +14,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@tensorflow/tfjs": "^4.15.0",
-    "@tensorflow/tfjs-node": "^4.15.0",
-    "@tensorflow/tfjs-node-gpu": "^4.15.0",
     "axios": "^1.6.2",
     "chart.js": "^4.4.3",
-    "jquery": "^3.7.1",
-    "jsfft": "^0.0.4"
+    "jquery": "^3.7.1"
   },
   "devDependencies": {
     "@types/jquery": "^3.5.30",

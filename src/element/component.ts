@@ -119,7 +119,7 @@ export class Component<TParams extends Parameters> {
         if (this.params[String(param)]) {
             this.params[String(param)].value = newValue;
         }
-        
+
         if (['attr', 'data-attr'].includes(type)) {
             let $attrChangingElement = this.$body;
 
@@ -142,7 +142,6 @@ export class Component<TParams extends Parameters> {
         if (!type || type === 'text') {
             $element.text(newValue);
         } else if (type === 'value') {
-            // $element.value = newValue;
             $element.val(newValue);
         }
     }
@@ -153,11 +152,9 @@ export class Component<TParams extends Parameters> {
 
     getValue<TType extends string | number>(param: keyof TParams): TType {
         if (this.params[String(param)]) {
-            return this.params[String(param)].value;
+            return this.params[String(param)].value as TType;
         }
 
         throw new Error(`Параметр ${this.type}.${String(param)} не существует`);
     }
-
-
 }

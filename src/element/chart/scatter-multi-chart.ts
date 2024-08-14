@@ -1,5 +1,5 @@
 import { ChartDataset } from "chart.js/auto";
-import { ChartData, DataType, LabelType, MultiChart } from "./multi-chart";
+import { ChartData, DataType, MultiChart } from "./multi-chart";
 
 type ChartType = 'scatter';
 
@@ -45,17 +45,17 @@ export class ScatterMultiChart extends MultiChart<ChartType, Parameters> {
             data,
             parsing: false,
             pointRadius: 2,
-            animations: {
-                x: false,
-                colors: false,
-            },
-            transitions: {
-                active: {
-                    animation: {
-                        duration: 0
-                    }
-                }
-            }
+            // animations: {
+            //     x: false,
+            //     colors: false,
+            // },
+            // transitions: {
+            //     active: {
+            //         animation: {
+            //             duration: 0
+            //         }
+            //     }
+            // }
         };
     }
 }

@@ -28,6 +28,7 @@ export async function getNormalizedSecuritiesData(candlesPromise: Promise<Securi
         .then(normalizeAllClosings);
 }
 
+// TODO
 /** Получить тренд по всему рынку. Нормализация в процессе необходима */
 // export async function getStockData(candlesPromise: Promise<SecuritiesCandles>) {
 //   return candlesPromise
